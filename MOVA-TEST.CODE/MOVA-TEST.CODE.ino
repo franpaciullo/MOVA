@@ -57,7 +57,7 @@
 #define MPU_DLPF_CONFIG   0x1A  // Filtro paso bajo digital
 #define MPU_ACCEL_XOUT_H  0x3B  // Primer registro de datos acelerómetro
 #define MPU_GYRO_XOUT_H   0x43  // Primer registro de datos giroscopio
-
+ 
 // ============================================================
 //  CONFIGURACIÓN — Ajusta estos valores según tu preferencia
 // ============================================================
@@ -65,14 +65,14 @@
 // --- Sensibilidad del cursor ---
 // Valores más altos = movimiento más rápido del cursor
 // Rango recomendado: 5.0 a 20.0
-const float SENSITIVITY_X = 10.0;  // Sensibilidad horizontal
-const float SENSITIVITY_Y = 10.0;  // Sensibilidad vertical
+const float SENSITIVITY_X = 1.0;  // Sensibilidad horizontal
+const float SENSITIVITY_Y = 1.0;  // Sensibilidad vertical
 
 // --- Zona muerta (deadzone) ---
 // Ángulo mínimo de inclinación para mover el cursor (en grados)
 // Elimina el jitter cuando la cabeza está quieta
 // Rango recomendado: 0.5 a 2.5
-const float DEADZONE = 1.2;
+const float DEADZONE = 3;
 
 // --- Filtro complementario ---
 // Alpha cercano a 1.0 confía más en el giroscopio (más suave, más drift)

@@ -1,6 +1,7 @@
 # MOVA - Mouse Giroscópico Inalámbrico
 
 COMPONENTES
+
  *2x Arduino Pro Micro (5V, 16KHz)
  *Giroscópio MPU6050 6 ejes
  *2x NRF24L01 MW-237

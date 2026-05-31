@@ -25,7 +25,6 @@
  *
  * COMPILACIÓN:
  *  - Board: "SparkFun Pro Micro" o "Arduino Leonardo"
- *  - Processor: ATmega32U4 (5V, 16MHz)
  * ============================================================
  */
 

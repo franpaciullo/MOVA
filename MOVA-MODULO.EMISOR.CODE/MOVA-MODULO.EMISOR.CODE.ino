@@ -1,0 +1,391 @@
+#include <Wire.h>       // I2C: bus de comunicación con el MPU6050   (incluida en Arduino IDE)
+#include <SPI.h>        // SPI: bus de comunicación con el NRF24L01  (incluida en Arduino IDE)
+#include <nRF24L01.h>   // Definiciones de registros del NRF24L01     (librería RF24)
+#include <RF24.h>       // Control de alto nivel del NRF24L01         (librería RF24, TMRh20)
+#include <MPU6050.h>    // Driver del MPU6050 (lectura accel/gyro)    (librería MPU6050, Electronic Cats)
+
+/*
+ * ============================================================================
+ *  MÓDULO EMISOR — HEAD TRACKER INALÁMBRICO (versión con librería MPU6050)
+ *  Arduino Pro Micro (ATmega32U4) + MPU6050 (GY-521) + NRF24L01
+ * ============================================================================
+ *
+ * QUÉ HACE:
+ *   Lee el acelerómetro y el giroscopio del MPU6050 mediante la librería
+ *   MPU6050.h, calcula el movimiento de cabeza (horizontal/vertical) con un
+ *   filtro complementario, le aplica zona muerta, sensibilidad, suavizado y
+ *   límite, y TRANSMITE el resultado por NRF24L01 al módulo receptor (que es
+ *   quien actúa como mouse USB en el PC).
+ *
+ *   El algoritmo de movimiento es el mismo ya validado; lo único distinto
+ *   frente a la versión anterior es que la lectura del sensor ahora usa la
+ *   librería MPU6050.h (mpu.getMotion6) en lugar de leer registros a mano.
+ *
+ * CARACTERÍSTICAS:
+ *   - Lee acelerómetro y giroscopio (mpu.getMotion6).
+ *   - Filtro complementario (fusión accel+gyro) para reducir ruido/drift.
+ *   - Zona muerta (deadzone) configurable.
+ *   - Sensibilidad configurable por eje.
+ *   - Suavizado adicional (media móvil exponencial).
+ *   - Límite máximo de movimiento por ciclo.
+ *   - Transmisión a frecuencia estable (~100 Hz) con temporización por millis().
+ *   - NO usa delay() (las esperas de arranque se hacen con millis()).
+ *   - Código completamente comentado.
+ *
+ * ---------------------------------------------------------------------------
+ * CONEXIONES — Pro Micro <-> MPU6050 (GY-521):
+ * ┌─────────────────┬──────────────┬──────────────────────────┐
+ * │  Pro Micro Pin  │  GY-521 Pin  │  Descripción             │
+ * ├─────────────────┼──────────────┼──────────────────────────┤
+ * │  VCC (5V o 3V3) │  VCC         │  Alimentación (5V OK)    │
+ * │  GND            │  GND         │  Tierra común            │
+ * │  Pin 2 (SDA)    │  SDA         │  I2C Datos               │
+ * │  Pin 3 (SCL)    │  SCL         │  I2C Reloj               │
+ * │  (sin conectar) │  AD0         │  Libre → dirección 0x68  │
+ * │  (sin conectar) │  INT         │  No se usa               │
+ * └─────────────────┴──────────────┴──────────────────────────┘
+ *
+ * CONEXIONES — Pro Micro <-> NRF24L01:
+ * ┌─────────────────┬──────────────┬──────────────────────────┐
+ * │  Pro Micro Pin  │  NRF24L01    │  Descripción             │
+ * ├─────────────────┼──────────────┼──────────────────────────┤
+ * │  3.3V  (¡no 5V!)│  VCC         │  Alimentación 3.3V       │
+ * │  GND            │  GND         │  Tierra común            │
+ * │  Pin 9          │  CE          │  Chip Enable             │
+ * │  Pin 10         │  CSN         │  Chip Select             │
+ * │  Pin 15 (SCK)   │  SCK         │  Reloj SPI               │
+ * │  Pin 16 (MOSI)  │  MOSI        │  Datos SPI salida        │
+ * │  Pin 14 (MISO)  │  MISO        │  Datos SPI entrada       │
+ * │  (sin conectar) │  IRQ         │  No se usa               │
+ * └─────────────────┴──────────────┴──────────────────────────┘
+ *  NOTA: alimenta el NRF24 con 3.3V estable (idealmente un regulador
+ *  LD1117V33 dedicado) y un condensador de ~47µF entre VCC y GND junto
+ *  al módulo, para evitar caídas de tensión al transmitir.
+ *
+ * LIBRERÍAS:
+ *   - Wire.h         -> incluida en Arduino IDE
+ *   - SPI.h          -> incluida en Arduino IDE
+ *   - RF24.h / nRF24L01.h -> librería "RF24" de TMRh20 (instalar)
+ *   - MPU6050.h      -> librería "MPU6050" de Electronic Cats (instalar;
+ *                       incluye internamente I2Cdev, no hace falta listarla)
+ *
+ * COMPILACIÓN:
+ *   - Board: "SparkFun Pro Micro" o "Arduino Leonardo"
+ *   - Processor: ATmega32U4 (5V, 16MHz)
+ * ============================================================================
+ */
+
+// ============================================================
+//  ESTRUCTURA DE DATOS QUE SE TRANSMITE
+//  Debe ser IDÉNTICA en el emisor y en el receptor.
+//  'magic' y 'seq' dan robustez al enlace:
+//   - magic: descarta basura del FIFO del NRF24.
+//   - seq:   nº de secuencia que cambia en cada envío; permite al receptor
+//            distinguir un paquete NUEVO de una relectura del mismo cuando
+//            el módulo se queda "atascado" al perder al emisor.
+// ============================================================
+struct MouseData {
+  int16_t moveX;       // Movimiento horizontal a enviar
+  int16_t moveY;       // Movimiento vertical a enviar
+  bool    clickLeft;   // Por ahora siempre false
+  bool    clickRight;  // Por ahora siempre false
+  uint8_t magic;       // Centinela de validez (debe valer MAGIC_VALOR)
+  uint8_t seq;         // Secuencia incremental (cambia en cada envío)
+};
+
+MouseData data;        // Instancia que se envía en cada ciclo
+
+// Valor centinela: el receptor solo acepta paquetes cuyo 'magic' coincida.
+#define MAGIC_VALOR 0x5A
+
+// ============================================================
+//  OBJETOS DE HARDWARE
+// ============================================================
+MPU6050 mpu;           // Sensor MPU6050 (dirección I2C 0x68 por defecto)
+
+#define PIN_CE   9     // Chip Enable del NRF24L01
+#define PIN_CSN  10    // Chip Select del NRF24L01
+RF24 radio(PIN_CE, PIN_CSN);
+
+// Dirección lógica del pipe (5 bytes). Debe ser igual a la del receptor.
+const byte direccion[6] = "MOUSE";
+
+// ============================================================
+//  PARÁMETROS AJUSTABLES
+// ============================================================
+
+// --- Sensibilidad del movimiento (por eje) ---
+// Más alto = más movimiento transmitido con la misma inclinación.
+const float SENSITIVITY_X = 1.0;  // Horizontal
+const float SENSITIVITY_Y = 1.0;  // Vertical
+
+// --- Zona muerta (deadzone) en grados ---
+// Inclinación mínima para generar movimiento. Elimina el jitter en reposo.
+const float DEADZONE = 3.0;
+
+// --- Filtro complementario (fusión accel + gyro) ---
+// Cerca de 1.0 confía más en el giroscopio (suave, con algo de drift);
+// cerca de 0.0 confía más en el acelerómetro (menos drift, más ruido).
+const float ALPHA = 0.96;
+
+// --- Suavizado (media móvil exponencial) ---
+// Cerca de 1.0 = muy suave pero con retardo; cerca de 0.0 = rápido pero brusco.
+const float SMOOTHING = 0.70;
+
+// --- Límite máximo de movimiento por ciclo ---
+// Evita saltos bruscos (queda dentro del rango seguro del receptor ±127).
+const int MAX_CURSOR_SPEED = 20;
+
+// --- Intervalo de muestreo y transmisión (ms) ---
+// 10 ms = ~100 Hz -> define la "frecuencia estable" de envío.
+const int LOOP_INTERVAL_MS = 10;
+
+// --- Número de muestras para la calibración inicial ---
+const int CALIBRATION_SAMPLES = 100;
+
+// ============================================================
+//  ESCALAS DEL MPU6050
+//  La librería, tras initialize(), deja el sensor en ±2g y ±250°/s,
+//  cuyas escalas son éstas:
+// ============================================================
+const float ACCEL_SCALE = 16384.0; // ±2g    → 16384 LSB/g
+const float GYRO_SCALE  = 131.0;   // ±250°/s→ 131 LSB/(°/s)
+
+// ============================================================
+//  VARIABLES GLOBALES
+// ============================================================
+float gyroOffsetX = 0.0, gyroOffsetY = 0.0, gyroOffsetZ = 0.0; // Offsets gyro
+float angleX = 0.0, angleY = 0.0;       // Ángulos del filtro complementario
+float refAngleX = 0.0, refAngleY = 0.0; // Posición neutra de la cabeza
+float smoothMouseX = 0.0, smoothMouseY = 0.0; // Movimiento suavizado
+
+unsigned long lastTime = 0;             // Control de frecuencia del loop
+uint8_t txSeq = 0;                      // Secuencia incremental de transmisión
+
+unsigned long lastSerialPrint = 0;      // Control del debug por Serial
+const int SERIAL_INTERVAL_MS = 100;     // Imprimir cada 100 ms
+
+// ============================================================
+//  PROTOTIPOS
+// ============================================================
+void  esperar(unsigned long ms);
+void  calibrarMPU6050();
+float applyDeadzone(float value, float deadzone);
+int   clampCursorSpeed(float value, int maxSpeed);
+
+// ============================================================
+//  ESPERA SIN delay()
+//  Bloqueo activo basado en millis(), usado SOLO en el arranque.
+//  Cumple el requisito de "no usar delay()".
+// ============================================================
+void esperar(unsigned long ms) {
+  unsigned long t = millis();
+  while (millis() - t < ms) { /* espera activa */ }
+}
+
+// ============================================================
+//  SETUP
+// ============================================================
+void setup() {
+
+  // Serial para depuración. Espera ACOTADA (máx. 3s) sin delay():
+  // si el emisor no está conectado a un PC, no se queda colgado.
+  Serial.begin(115200);
+  unsigned long startWait = millis();
+  while (!Serial && (millis() - startWait < 3000)) { /* espera breve */ }
+
+  Serial.println(F("============================================"));
+  Serial.println(F("  EMISOR HEAD TRACKER (MPU6050 lib + NRF24)"));
+  Serial.println(F("============================================"));
+
+  // --- Bus I2C + MPU6050 (vía librería) ---
+  Wire.begin();
+  Wire.setClock(400000);            // Fast I2C (400 kHz)
+
+  mpu.initialize();                 // Despierta el sensor y aplica config por
+                                    // defecto: ±2g, ±250°/s, sleep desactivado.
+  mpu.setDLPFMode(MPU6050_DLPF_BW_42); // Filtro paso-bajo interno (~42 Hz): menos ruido
+
+  // Verifica que el sensor responda (equivale a comprobar WHO_AM_I).
+  if (mpu.testConnection()) {
+    Serial.println(F("[MPU6050] Conexion correcta."));
+  } else {
+    Serial.println(F("[MPU6050] ERROR: no responde. Revisa I2C (SDA=2, SCL=3) y alimentacion."));
+  }
+
+  // --- Calibración (mantener la cabeza QUIETA y al frente) ---
+  Serial.println(F("[CALIBRACION] Mantener cabeza QUIETA mirando al frente..."));
+  Serial.println(F("[CALIBRACION] Iniciando en 2 segundos..."));
+  esperar(2000);                    // Pausa de cortesía (sin delay())
+  calibrarMPU6050();
+  Serial.println(F("[CALIBRACION] Completada.\n"));
+
+  // --- NRF24L01 ---
+  radio.begin();
+  radio.setChannel(108);            // Canal RF fijo (0-125). Igual en el receptor.
+  radio.setDataRate(RF24_1MBPS);    // 1 Mbps: baja latencia y buen alcance.
+  radio.setPALevel(RF24_PA_MIN);    // Potencia. Subir a RF24_PA_HIGH si la
+                                    // alimentación 3.3V es sólida y quieres alcance.
+  radio.setAutoAck(true);           // Confirmación automática de paquetes.
+  radio.openWritingPipe(direccion); // Canal de escritura.
+  radio.stopListening();            // Modo TRANSMISOR.
+  Serial.print(F("[NRF24L01] Chip conectado por SPI: "));
+  Serial.println(radio.isChipConnected() ? F("SI") : F("NO"));
+
+  // Estado inicial de los botones (aún no implementados).
+  data.clickLeft  = false;
+  data.clickRight = false;
+
+  Serial.println(F("[OK] Emisor listo. Transmitiendo movimiento...\n"));
+  Serial.println(F("gyroX\tgyroY\tangleX\tangleY\tmoveX\tmoveY\tTX"));
+
+  lastTime = millis();
+  lastSerialPrint = millis();
+}
+
+// ============================================================
+//  LOOP PRINCIPAL
+// ============================================================
+void loop() {
+
+  unsigned long currentTime = millis();
+
+  // Control de frecuencia: ejecutar solo cada LOOP_INTERVAL_MS (no bloqueante).
+  if ((currentTime - lastTime) < LOOP_INTERVAL_MS) {
+    return;
+  }
+
+  // Delta de tiempo en segundos (para integrar el giroscopio).
+  float dt = (currentTime - lastTime) / 1000.0;
+  lastTime = currentTime;
+  if (dt > 0.05) dt = 0.05;         // Limita dt si el loop se retrasa.
+
+  // --- 1. LEER SENSORES con la librería MPU6050 ---
+  int16_t rawAX, rawAY, rawAZ, rawGX, rawGY, rawGZ;
+  mpu.getMotion6(&rawAX, &rawAY, &rawAZ, &rawGX, &rawGY, &rawGZ);
+
+  // Convertir a unidades físicas y restar los offsets del giroscopio.
+  float ax = rawAX / ACCEL_SCALE;             // g
+  float ay = rawAY / ACCEL_SCALE;             // g
+  float az = rawAZ / ACCEL_SCALE;             // g
+  float gx = (rawGX / GYRO_SCALE) - gyroOffsetX; // °/s
+  float gy = (rawGY / GYRO_SCALE) - gyroOffsetY; // °/s
+  // gz no se usa para el movimiento, pero se lee igualmente.
+
+  // --- 2. FILTRO COMPLEMENTARIO (fusión accel + gyro) ---
+  float accelAngleX = atan2(ay, az) * 180.0 / PI;  // Roll
+  float accelAngleY = atan2(-ax, az) * 180.0 / PI; // Pitch
+  angleX = ALPHA * (angleX + gx * dt) + (1.0 - ALPHA) * accelAngleX;
+  angleY = ALPHA * (angleY + gy * dt) + (1.0 - ALPHA) * accelAngleY;
+
+  // --- 3. DESPLAZAMIENTO RELATIVO A LA POSICIÓN NEUTRA ---
+  float deltaX = angleX - refAngleX;  // Roll  → cursor Y
+  float deltaY = angleY - refAngleY;  // Pitch → cursor X
+
+  // --- 4. ZONA MUERTA ---
+  float deadDeltaX = applyDeadzone(deltaX, DEADZONE);
+  float deadDeltaY = applyDeadzone(deltaY, DEADZONE);
+
+  // --- 5. MOVIMIENTO BRUTO (con sensibilidad) ---
+  float rawMouseX =  deadDeltaY * SENSITIVITY_X;  // Pitch → X
+  float rawMouseY = -deadDeltaX * SENSITIVITY_Y;  // Roll  → Y (invertido)
+
+  // --- 6. SUAVIZADO (media móvil exponencial) ---
+  smoothMouseX = SMOOTHING * smoothMouseX + (1.0 - SMOOTHING) * rawMouseX;
+  smoothMouseY = SMOOTHING * smoothMouseY + (1.0 - SMOOTHING) * rawMouseY;
+
+  // --- 7. LIMITAR VELOCIDAD MÁXIMA ---
+  int moveX = clampCursorSpeed(smoothMouseX, MAX_CURSOR_SPEED);
+  int moveY = clampCursorSpeed(smoothMouseY, MAX_CURSOR_SPEED);
+
+  // --- 8. TRANSMITIR POR NRF24L01 ---
+  // Se envía SIEMPRE (aunque sea 0) para mantener vivo el enlace.
+  data.moveX      = (int16_t)moveX;
+  data.moveY      = (int16_t)moveY;
+  data.clickLeft  = false;          // Reservado para el futuro
+  data.clickRight = false;          // Reservado para el futuro
+  data.magic      = MAGIC_VALOR;    // Marca el paquete como válido
+  data.seq        = txSeq++;         // Cambia en cada envío (envuelve en 256)
+  bool ok = radio.write(&data, sizeof(data));
+
+  // --- 9. DEBUG POR SERIAL (cada SERIAL_INTERVAL_MS) ---
+  if ((currentTime - lastSerialPrint) >= SERIAL_INTERVAL_MS) {
+    lastSerialPrint = currentTime;
+    Serial.print(gx, 2);     Serial.print(F("\t"));
+    Serial.print(gy, 2);     Serial.print(F("\t"));
+    Serial.print(angleX, 2); Serial.print(F("\t"));
+    Serial.print(angleY, 2); Serial.print(F("\t"));
+    Serial.print(moveX);     Serial.print(F("\t"));
+    Serial.print(moveY);     Serial.print(F("\t"));
+    // TX:OK = el receptor confirmó (ACK). TX:FAIL = no llegó confirmación.
+    Serial.println(ok ? F("OK") : F("FAIL"));
+  }
+}
+
+// ============================================================
+//  FUNCIÓN: Calibración del MPU6050
+//  Calcula los offsets del giroscopio y la posición neutra de la cabeza,
+//  promediando varias muestras con el sensor en reposo.
+// ============================================================
+void calibrarMPU6050() {
+  float sumGX = 0, sumGY = 0, sumGZ = 0;
+  float sumAX = 0, sumAY = 0, sumAZ = 0;
+  int16_t rawAX, rawAY, rawAZ, rawGX, rawGY, rawGZ;
+
+  Serial.print(F("[CALIBRACION] Tomando "));
+  Serial.print(CALIBRATION_SAMPLES);
+  Serial.println(F(" muestras..."));
+
+  for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
+    mpu.getMotion6(&rawAX, &rawAY, &rawAZ, &rawGX, &rawGY, &rawGZ);
+    sumAX += rawAX / ACCEL_SCALE;
+    sumAY += rawAY / ACCEL_SCALE;
+    sumAZ += rawAZ / ACCEL_SCALE;
+    sumGX += rawGX / GYRO_SCALE;
+    sumGY += rawGY / GYRO_SCALE;
+    sumGZ += rawGZ / GYRO_SCALE;
+    esperar(2);                     // Espaciado entre muestras (sin delay())
+  }
+
+  // Promedios.
+  float avgAX = sumAX / CALIBRATION_SAMPLES;
+  float avgAY = sumAY / CALIBRATION_SAMPLES;
+  float avgAZ = sumAZ / CALIBRATION_SAMPLES;
+  gyroOffsetX = sumGX / CALIBRATION_SAMPLES;
+  gyroOffsetY = sumGY / CALIBRATION_SAMPLES;
+  gyroOffsetZ = sumGZ / CALIBRATION_SAMPLES;
+
+  // Ángulos de referencia (posición neutra de la cabeza).
+  refAngleX = atan2(avgAY, avgAZ) * 180.0 / PI;
+  refAngleY = atan2(-avgAX, avgAZ) * 180.0 / PI;
+  angleX = refAngleX;
+  angleY = refAngleY;
+
+  Serial.print(F("  Offset Gyro X/Y/Z: "));
+  Serial.print(gyroOffsetX, 3); Serial.print(F(" / "));
+  Serial.print(gyroOffsetY, 3); Serial.print(F(" / "));
+  Serial.println(gyroOffsetZ, 3);
+  Serial.print(F("  Angulo neutro X/Y: "));
+  Serial.print(refAngleX, 2); Serial.print(F(" / "));
+  Serial.println(refAngleY, 2);
+}
+
+// ============================================================
+//  FUNCIÓN: Zona muerta
+//  Dentro de la zona muerta → 0. Fuera → resta la zona muerta para que
+//  no haya un salto brusco justo en el límite.
+// ============================================================
+float applyDeadzone(float value, float deadzone) {
+  if (value >  deadzone) return value - deadzone;
+  if (value < -deadzone) return value + deadzone;
+  return 0.0;
+}
+
+// ============================================================
+//  FUNCIÓN: Limitar el movimiento al rango [-maxSpeed, +maxSpeed]
+// ============================================================
+int clampCursorSpeed(float value, int maxSpeed) {
+  if (value >  maxSpeed) return maxSpeed;
+  if (value < -maxSpeed) return -maxSpeed;
+  return (int)value;
+}

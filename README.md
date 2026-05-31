@@ -1,5 +1,7 @@
 # MOVA - Mouse Giroscópico Inalámbrico
 
+Proyecto Tecnológico Final 2026
+
 COMPONENTES
 ------------------------------------------------------
 

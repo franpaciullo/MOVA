@@ -13,7 +13,7 @@ COMPONENTES
 
  -Motor vibrador pequeño
 
- -Resistencia 47ohm para motor.
+ -Resistencia 100ohm para motor.
 
  -3x TD1117V33 (STEP-DOWN a 3.3v para RFs y vibrador)
 

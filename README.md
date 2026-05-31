@@ -2,13 +2,19 @@
 
 COMPONENTES
 
- *2x Arduino Pro Micro (5V, 16KHz)
- *Giroscópio MPU6050 6 ejes
- *2x NRF24L01 MW-237
- *Motor vibrador pequeño
- *Resistencia 47ohm para motor.
- *3x TD1117V33 (STEP-DOWN a 3.3v para RFs y vibrador)
- *2x Capacitor 47uf para módulos RFs.
+ -2x Arduino Pro Micro (5V, 16KHz)
+
+ -Giroscópio MPU6050 6 ejes
+
+ -2x NRF24L01 MW-237
+
+ -Motor vibrador pequeño
+
+ -Resistencia 47ohm para motor.
+
+ -3x TD1117V33 (STEP-DOWN a 3.3v para RFs y vibrador)
+
+ -2x Capacitor 47uf para módulos RFs.
 
 ------------------------------------------------------
 MOVA-TEST-CODE

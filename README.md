@@ -29,6 +29,14 @@ Prueba comunicación del Arduino Pro Micro enviando los datos del MPU6050 a trav
 CÓDIGO EMISOR
 ------------------------------------------------------
 
-Actualmente no utiliza vibrador ni sensores para clicks
+Actualmente no utiliza vibrador ni sensores para clicks.
+Arduino Pro Micro (emisor) envia datos del MPU6050 al receptor. 
 
+
+CÓDIGO RECEPTOR
 ------------------------------------------------------
+
+Arduino Pro Micro (receptor) recibe los datos del emisor a través de RF y mueve el cursor en pantalla a traves de USB
+
+
+

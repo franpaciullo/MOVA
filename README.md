@@ -19,13 +19,13 @@ COMPONENTES
 
  -Sensor de proximidad Gy 9960 ó Sensor táctil Tpt223 (para clicks, a definir)
 
-------------------------------------------------------
+
 MOVA-TEST-CODE
 ------------------------------------------------------
 
 Prueba comunicación del Arduino Pro Micro enviando los datos del MPU6050 a través de USB. No usa transmisión RF.
 
-------------------------------------------------------
+
 CÓDIGO EMISOR
 ------------------------------------------------------
 

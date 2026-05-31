@@ -3,12 +3,12 @@
 
 /*
  * ============================================================
- *  HEAD TRACKER MOUSE — Arduino Pro Micro + MPU6050 GY-521
+ * Arduino Pro Micro + MPU6050 GY-521
  * ============================================================
  *
  * DESCRIPCIÓN:
  *   Convierte movimientos de cabeza detectados por el MPU6050
- *   en movimiento real del cursor del mouse en Windows, usando
+ *   en movimiento real del cursor del mouse, usando
  *   el Arduino Pro Micro como dispositivo HID USB.
  *
  * CONEXIONES (Pro Micro <-> MPU6050 GY-521):
@@ -23,34 +23,19 @@
  * │  (sin conectar) │  INT         │  No se usa en este código│
  * └─────────────────┴──────────────┴─────────────────────────┘
  *
- * NOTAS DE CONEXIÓN:
- *  - En el Pro Micro los pines I2C son: SDA = Pin 2, SCL = Pin 3
- *  - El pin AD0 del MPU6050 libre (o a GND) → dirección I2C: 0x68
- *  - Si AD0 está en VCC → dirección I2C: 0x69 (cambiar MPU_ADDR abajo)
- *  - El GY-521 ya tiene resistencias pull-up en SDA/SCL integradas
- *
- * LIBRERÍAS REQUERIDAS:
- *  - Wire.h   (incluida en Arduino IDE)
- *  - Mouse.h  (incluida para ATmega32U4 — Pro Micro, Leonardo)
- *
  * COMPILACIÓN:
  *  - Board: "SparkFun Pro Micro" o "Arduino Leonardo"
  *  - Processor: ATmega32U4 (5V, 16MHz)
- *
- * AUTOR: Generado para uso personal
  * ============================================================
  */
 
-
-
 // ============================================================
 //  DIRECCIÓN I2C DEL MPU6050
-// ============================================================
 #define MPU_ADDR 0x68  // AD0=GND → 0x68 | AD0=VCC → 0x69
 
 // ============================================================
+
 //  REGISTROS DEL MPU6050
-// ============================================================
 #define MPU_PWR_MGMT_1   0x6B  // Registro de gestión de energía
 #define MPU_ACCEL_CONFIG  0x1C  // Configuración del acelerómetro
 #define MPU_GYRO_CONFIG   0x1B  // Configuración del giroscopio
@@ -59,8 +44,8 @@
 #define MPU_GYRO_XOUT_H   0x43  // Primer registro de datos giroscopio
  
 // ============================================================
+
 //  CONFIGURACIÓN — Ajusta estos valores según tu preferencia
-// ============================================================
 
 // --- Sensibilidad del cursor ---
 // Valores más altos = movimiento más rápido del cursor
@@ -95,20 +80,19 @@ const int MAX_CURSOR_SPEED = 20;
 const int LOOP_INTERVAL_MS = 10;
 
 // --- Número de muestras para calibración inicial ---
-const int CALIBRATION_SAMPLES = 500;
+const int CALIBRATION_SAMPLES = 100;
 
 // ============================================================
+
 //  ESCALAS DEL MPU6050 (según configuración de registros)
-// ============================================================
 // Acelerómetro: ±2g → LSB/g = 16384.0
 const float ACCEL_SCALE = 16384.0;
 // Giroscopio: ±250°/s → LSB/(°/s) = 131.0
 const float GYRO_SCALE  = 131.0;
 
 // ============================================================
-//  VARIABLES GLOBALES
-// ============================================================
 
+//  VARIABLES GLOBALES
 // Offsets de calibración del giroscopio (se calculan al inicio)
 float gyroOffsetX = 0.0;
 float gyroOffsetY = 0.0;
@@ -134,8 +118,8 @@ unsigned long lastSerialPrint = 0;
 const int SERIAL_INTERVAL_MS = 100;  // Imprimir cada 100ms
 
 // ============================================================
+
 //  PROTOTIPOS DE FUNCIONES
-// ============================================================
 void    initMPU6050();
 void    calibrateMPU6050();
 void    readMPU6050(float &ax, float &ay, float &az,
@@ -147,13 +131,11 @@ void    printSerialData(float ax, float ay, float gx, float gy,
                         float aX, float aY, int mX, int mY);
 
 // ============================================================
-//  SETUP
-// ============================================================
+
+
 void setup() {
 
-  // Iniciar comunicación serial para debug
   Serial.begin(115200);
-  // Esperar a que Serial esté listo (necesario en ATmega32U4)
   // Timeout de 3 segundos para no bloquear si no hay monitor serial
   unsigned long startWait = millis();
   while (!Serial && (millis() - startWait < 3000)) {
@@ -171,7 +153,7 @@ void setup() {
   // Inicializar y configurar el MPU6050
   initMPU6050();
 
-  // Calibrar el giroscopio (cabeza quieta y plana)
+  // Calibrar el giroscopio (cabeza quieta)
   Serial.println(F("\n[CALIBRACION] Mantener cabeza QUIETA y mirando al frente..."));
   Serial.println(F("[CALIBRACION] Iniciando en 2 segundos..."));
   delay(2000);
@@ -191,9 +173,7 @@ void setup() {
   lastSerialPrint = millis();
 }
 
-// ============================================================
-//  LOOP PRINCIPAL
-// ============================================================
+
 void loop() {
 
   unsigned long currentTime = millis();
@@ -261,9 +241,7 @@ void loop() {
   }
 }
 
-// ============================================================
-//  FUNCIÓN: Inicializar MPU6050
-// ============================================================
+
 void initMPU6050() {
 
   Serial.println(F("[MPU6050] Inicializando..."));
@@ -316,11 +294,7 @@ void initMPU6050() {
   Serial.println(F("[MPU6050] Configurado: Gyro ±250°/s | Accel ±2g | DLPF nivel 3"));
 }
 
-// ============================================================
-//  FUNCIÓN: Calibración automática del MPU6050
-//  Calcula los offsets promedio del giroscopio y
-//  establece la posición neutra de la cabeza (angleX, angleY)
-// ============================================================
+
 void calibrateMPU6050() {
 
   float sumGX = 0, sumGY = 0, sumGZ = 0;
@@ -346,8 +320,8 @@ void calibrateMPU6050() {
     sumGY += rawGY / GYRO_SCALE;
     sumGZ += rawGZ / GYRO_SCALE;
 
-    // Mostrar progreso cada 100 muestras
-    if ((i + 1) % 100 == 0) {
+    // Mostrar progreso cada 50 muestras
+    if ((i + 1) % 50 == 0) {
       Serial.print(F("  ..."));
       Serial.print(i + 1);
       Serial.println(F(" muestras tomadas"));
@@ -380,11 +354,7 @@ void calibrateMPU6050() {
   Serial.print(F("  Angulo neutro Y (pitch): ")); Serial.println(refAngleY, 2);
 }
 
-// ============================================================
-//  FUNCIÓN: Leer todos los datos del MPU6050
-//  Retorna acelerómetro en [g] y giroscopio en [°/s],
-//  con offsets de calibración ya aplicados.
-// ============================================================
+
 void readMPU6050(float &ax, float &ay, float &az,
                  float &gx, float &gy, float &gz) {
 
@@ -418,11 +388,12 @@ void readMPU6050(float &ax, float &ay, float &az,
   gz = (rawGZ / GYRO_SCALE) - gyroOffsetZ;
 }
 
-// ============================================================
-//  FUNCIÓN: Leer un registro de 16 bits del MPU6050
-//  Usada durante la calibración para leer registros individuales
-// ============================================================
+
+
 int16_t readRegister16(uint8_t reg) {
+  //  FUNCIÓN: Leer un registro de 16 bits del MPU6050
+  //  Usada durante la calibración para leer registros individuales
+
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(reg);
   Wire.endTransmission(false);
@@ -430,12 +401,7 @@ int16_t readRegister16(uint8_t reg) {
   return (Wire.read() << 8) | Wire.read();
 }
 
-// ============================================================
-//  FUNCIÓN: Aplicar zona muerta (deadzone)
-//  Si el valor absoluto está dentro de la zona muerta, retorna 0.
-//  Si supera la zona muerta, resta la zona muerta del valor
-//  (para evitar el salto brusco en el límite).
-// ============================================================
+
 float applyDeadzone(float value, float deadzone) {
   if (value > deadzone) {
     return value - deadzone;   // Supera zona muerta positiva
@@ -445,20 +411,14 @@ float applyDeadzone(float value, float deadzone) {
   return 0.0;  // Dentro de la zona muerta → sin movimiento
 }
 
-// ============================================================
-//  FUNCIÓN: Limitar velocidad máxima del cursor
-//  Convierte float a int limitado al rango [-maxSpeed, +maxSpeed]
-// ============================================================
+
 int clampCursorSpeed(float value, int maxSpeed) {
   if (value > maxSpeed)  return maxSpeed;
   if (value < -maxSpeed) return -maxSpeed;
   return (int)value;
 }
 
-// ============================================================
-//  FUNCIÓN: Imprimir datos en Serial Monitor
-//  Formato tabular para facilitar lectura y graficación
-// ============================================================
+
 void printSerialData(float ax, float ay, float gx, float gy,
                      float aX, float aY, int mX, int mY) {
   Serial.print(ax,  3);  Serial.print(F("\t"));
@@ -477,24 +437,24 @@ void printSerialData(float ax, float ay, float gx, float gy,
  * ============================================================
  *
  * El cursor se mueve demasiado rápido:
- *   → Reducir SENSITIVITY_X y SENSITIVITY_Y (ej: 6.0)
+ *   → Reducir SENSITIVITY_X y SENSITIVITY_Y
  *
  * El cursor tiembla o vibra cuando la cabeza está quieta:
  *   → Aumentar DEADZONE (ej: 1.8)
  *
  * El cursor tarda mucho en responder:
- *   → Reducir SMOOTHING (ej: 0.55)
- *   → Aumentar SENSITIVITY (ej: 14.0)
+ *   → Reducir SMOOTHING
+ *   → Aumentar SENSITIVITY
  *
  * El cursor se mueve lentamente o con retraso:
- *   → Reducir SMOOTHING (ej: 0.50)
+ *   → Reducir SMOOTHING
  *
  * El cursor deriva lentamente con la cabeza quieta (drift):
- *   → Reducir ALPHA (ej: 0.92) para confiar más en acelerómetro
+ *   → Reducir ALPHA para confiar más en acelerómetro
  *   → Asegurarse de que la calibración se hizo con la cabeza QUIETA
  *
  * Movimiento se siente brusco:
- *   → Aumentar SMOOTHING (ej: 0.80)
+ *   → Aumentar SMOOTHING
  *
  * ============================================================
  *  SOLUCIÓN DE PROBLEMAS

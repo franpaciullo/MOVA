@@ -15,7 +15,7 @@
  * ┌─────────────────┬──────────────┬──────────────────────────┐
  * │  Pro Micro Pin  │  GY-521 Pin  │  Descripción             │
  * ├─────────────────┼──────────────┼──────────────────────────┤
- * │  5V             │  VCC         │  Alimentación (5V o 3.3V)y│
+ * │  5V             │  VCC         │  Alimentación (5V o 3.3V)│
  * │  GND            │  GND         │  Tierra común            │
  * │  Pin 2 (SDA)    │  SDA         │  I2C Datos               │
  * │  Pin 3 (SCL)    │  SCL         │  I2C Reloj               │
@@ -50,14 +50,15 @@
 #include <RF24.h>       // Control de alto nivel del NRF24L01         (librería RF24, TMRh20)
 #include <MPU6050.h>    // Driver del MPU6050 (lectura accel/gyro)    (librería MPU6050, Electronic Cats)
 
+#include <printf.h>
+
 
 struct MouseData {
   int16_t moveX;       // Movimiento horizontal a enviar
   int16_t moveY;       // Movimiento vertical a enviar
-  bool    clickLeft;   // Por ahora siempre false
-  bool    clickRight;  // Por ahora siempre false
+  bool    clickLeft;   // Click izquierdo (pin PIN_BTN_LEFT,  INPUT_PULLUP)
+  bool    clickRight;  // Click derecho   (pin PIN_BTN_RIGHT, INPUT_PULLUP)
   uint8_t magic;       // Valor centinela: el receptor solo acepta paquetes cuyo 'magic' coincida con el del emisor
-  //uint8_t seq;         // Secuencia incremental (cambia en cada envío)
 };
 
 MouseData data;        // Instancia que se envía en cada ciclo
@@ -76,6 +77,15 @@ MPU6050 mpu;           // Sensor MPU6050 (dirección I2C 0x68 por defecto)
 #define PIN_CSN  10    // Chip Select del NRF24L01
 // SPI por hardware del Pro Micro: MOSI=16, MISO=14, SCK=15
 RF24 radio(PIN_CE, PIN_CSN);
+
+// --- LED RGB (ánodo común: LOW = encendido, HIGH = apagado) ---
+#define PIN_LED_R  A0   // Rojo
+#define PIN_LED_B  A1   // Azul
+#define PIN_LED_G  A2   // Verde
+
+// --- Pines de los botones del mouse ---
+#define PIN_BTN_LEFT  4   // Botón izquierdo (INPUT_PULLUP: LOW = presionado)
+#define PIN_BTN_RIGHT 5   // Botón derecho   (INPUT_PULLUP: LOW = presionado)
 
 // Dirección lógica del pipe (5 bytes). Debe ser igual a la del receptor.
 const byte direccion[6] = "MOUSE";
@@ -127,10 +137,9 @@ float refAngleX = 0.0, refAngleY = 0.0; // Posición neutra de la cabeza
 float smoothMouseX = 0.0, smoothMouseY = 0.0; // Movimiento suavizado
 
 unsigned long lastTime = 0;             // Control de frecuencia del loop
-//uint8_t txSeq = 0;                      // Secuencia incremental de transmisión
 
 unsigned long lastSerialPrint = 0;      // Control del debug por Serial
-const int SERIAL_INTERVAL_MS = 100;     // Imprimir cada 100 ms
+const int SERIAL_INTERVAL_MS = 1000;     // Imprimir cada 100 ms
 
 int countOK   = 0;
 int countFAIL = 0;
@@ -141,16 +150,45 @@ void esperar(unsigned long ms) {
   while (millis() - t < ms) { /* espera activa */ }
 }
 
+void LedRGB(bool rojo, bool azul, bool verde) {
+  digitalWrite(PIN_LED_R, rojo  ? HIGH : LOW);
+  digitalWrite(PIN_LED_B, azul  ? HIGH : LOW);
+  digitalWrite(PIN_LED_G, verde ? HIGH : LOW);
+}
+
+// Colores de estado (macros para legibilidad)
+#define LED_APAGADO()   LedRGB(0, 0, 0)
+#define LED_AMARILLO()  LedRGB(1, 0, 1)   // Rojo + Verde = Amarillo (iniciando)
+#define LED_AZUL()      LedRGB(0, 1, 0)   // Calibrando
+#define LED_VERDE()     LedRGB(0, 0, 1)   // OK
+#define LED_ROJO()      LedRGB(1, 0, 0)   // Error hardware
+#define LED_MAGENTA()   LedRGB(1, 1, 0) 
 
 void setup() {
   
   Serial.begin(115200);
+  printf_begin();
   unsigned long startWait = millis();
+
+  // --- Inicialización pines LED RGB ---
+  pinMode(PIN_LED_R, OUTPUT);
+  pinMode(PIN_LED_B, OUTPUT);
+  pinMode(PIN_LED_G, OUTPUT);
+  LED_AMARILLO();   // Amarillo: iniciando / esperando Serial
+
   while (!Serial && (millis() - startWait < 3000)) { /* espera breve */ }
 
   Serial.println(F("============================================"));
   Serial.println(F("  EMISOR HEAD TRACKER (MPU6050 lib + NRF24)"));
   Serial.println(F("============================================"));
+
+  // Verificación final: ambos periféricos deben estar OK
+  bool mpuOK = false;
+  bool rfOK  = false;
+
+  // --- Pines de botones ---
+  pinMode(PIN_BTN_LEFT,  INPUT_PULLUP);
+  pinMode(PIN_BTN_RIGHT, INPUT_PULLUP);
 
   // --- Inicialización Bus I2C ---
   Wire.begin();
@@ -159,14 +197,21 @@ void setup() {
   mpu.initialize();
   mpu.setDLPFMode(MPU6050_DLPF_BW_42);
 
+  uint8_t id = mpu.getDeviceID();
+  Serial.print("WHO_AM_I = 0x");
+  Serial.println(id, HEX);
+
   if (mpu.testConnection()) {
     Serial.println(F("[MPU6050] Conexion correcta."));
+    mpuOK = true;
   } else {
     Serial.println(F("[MPU6050] ERROR: no responde. Revisar I2C (SDA, SCL) y alimentacion."));
+    mpuOK = false;
   }
 
   Serial.println(F("[CALIBRACION] Mantener cabeza QUIETA mirando al frente..."));
   Serial.println(F("[CALIBRACION] Iniciando en 2 segundos..."));
+  LED_AZUL();
   esperar(2000);
   calibrarMPU6050();
   Serial.println(F("[CALIBRACION] Completada.\n"));
@@ -183,9 +228,26 @@ void setup() {
   radio.stopListening();            // Modo TRANSMISOR.
 
   Serial.print(F("[NRF24L01] Chip conectado por SPI: "));
-  Serial.println(radio.isChipConnected() ? F("SI") : F("NO"));
+  if(radio.isChipConnected()){
+    Serial.println(F("SI"));
+    rfOK = true;
+  }
+  else{
+    Serial.println(F("NO"));
+    rfOK = false;
+  }
 
-  // Estado inicial de los botones (aún no implementados).
+  if (!mpuOK || !rfOK) {
+    if (!mpuOK) Serial.println(F("[ERROR] MPU6050 no detectado."));
+    if (!rfOK)  Serial.println(F("[ERROR] NRF24L01 no detectado."));
+    LED_ROJO();     // Rojo: algún periférico no responde
+    while (true){}
+
+  } else {
+    LED_VERDE();    // Verde: todo OK, listo para transmitir
+  }
+
+  // Estado inicial de los botones (se leen en tiempo real en el loop).
   data.clickLeft  = false;
   data.clickRight = false;
 
@@ -194,6 +256,8 @@ void setup() {
 
   lastTime = millis();
   lastSerialPrint = millis();
+
+  radio.printDetails();
 }
 
 // ============================================================
@@ -285,13 +349,14 @@ void loop() {
 
   data.moveX      = (int16_t)moveX;
   data.moveY      = (int16_t)moveY;
-  data.clickLeft  = false;          // Reservado para el futuro
-  data.clickRight = false;          // Reservado para el futuro
+  data.clickLeft  = digitalRead(PIN_BTN_LEFT);   // LOW = presionado
+  data.clickRight = digitalRead(PIN_BTN_RIGHT);  // LOW = presionado
   data.magic      = MAGIC_VALOR;    // Marca el paquete como válido
-  //data.seq        = txSeq++;         // Cambia en cada envío (envuelve en 256)
-  bool ok = radio.write(&data, sizeof(data));
-  if (ok) countOK++; else countFAIL++;
 
+  bool ok = radio.write(&data, sizeof(data), true);   // multicast = true
+
+  if (ok) countOK++; else countFAIL++;
+  //if (countFAIL > 20) LED_AMARILLO(); else LED_VERDE();
   /* ------------------------------------------------------------------------
    *  (9) DEBUG POR SERIAL (cada SERIAL_INTERVAL_MS)
    * ------------------------------------------------------------------------
@@ -307,6 +372,9 @@ void loop() {
     Serial.print(moveY);     Serial.print(F("\t"));
     Serial.print(F("OK:"));  Serial.print(countOK);
     Serial.print(F(" FAIL:")); Serial.println(countFAIL);
+    Serial.print(F(" L:"));  Serial.print(data.clickLeft  ? F("1") : F("0"));
+    Serial.print(F(" R:"));  Serial.print(data.clickRight ? F("1") : F("0"));
+    if (countFAIL > 20) LED_AMARILLO(); else LED_VERDE();
     countOK = 0;
     countFAIL = 0;
   }

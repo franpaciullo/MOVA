@@ -68,6 +68,25 @@ RF24 radio(PIN_CE, PIN_CSN);
 // Dirección lógica del pipe (5 bytes). Igual a la del emisor.
 const byte direccion[6] = "MOUSE";
 
+// --- LED RGB (ánodo común: LOW = encendido, HIGH = apagado) ---
+#define PIN_LED_R  2   // Rojo
+#define PIN_LED_B  3   // Azul
+#define PIN_LED_G  4   // Verde
+
+void LedRGB(bool rojo, bool azul, bool verde) {
+  digitalWrite(PIN_LED_R, rojo  ? HIGH : LOW);
+  digitalWrite(PIN_LED_B, azul  ? HIGH : LOW);
+  digitalWrite(PIN_LED_G, verde ? HIGH : LOW);
+}
+
+// Colores de estado (macros para legibilidad)
+#define LED_APAGADO()   LedRGB(0, 0, 0)
+#define LED_AMARILLO()  LedRGB(1, 0, 1)   // Rojo + Verde = Amarillo (iniciando)
+#define LED_AZUL()      LedRGB(0, 1, 0)   // Calibrando
+#define LED_VERDE()     LedRGB(0, 0, 1)   // OK
+#define LED_ROJO()      LedRGB(1, 0, 0)   // Error hardware
+#define LED_MAGENTA()   LedRGB(1, 1, 0)   // Fallo RF sostenido
+
 // LED indicador de error (pin 17 = LED RX del Pro Micro; enciende en LOW).
 #define PIN_LED_ERROR  17
 
@@ -120,6 +139,8 @@ void liberarBotones() {
   prevRight = false;
 }
 
+
+
 // Parpadeo NO bloqueante del LED de error (sin delay()), mientras el NRF24L01
 // no responde. Reintenta begin() para recuperarse si lo reconectas.
 void errorNRF() {
@@ -127,15 +148,16 @@ void errorNRF() {
   bool estadoLed = false;
   Serial.println(F("ERROR: NRF24L01 no detectado. Revisa cableado y 3.3V."));
 
-  while (!radio.begin()) {                 // Sale cuando el NRF responde
+  while (!radio.begin() || !radio.isChipConnected()) {                 // Sale cuando el NRF responde
     unsigned long ahora = millis();
     if (ahora - tLed >= 250) {
+      Serial.println(F("ERROR: NRF24L01 no detectado."));
       tLed = ahora;
       estadoLed = !estadoLed;
-      digitalWrite(PIN_LED_ERROR, estadoLed ? LOW : HIGH); // LOW = encendido
+      if (estadoLed) LED_ROJO(); else LED_APAGADO();
+      
     }
   }
-  digitalWrite(PIN_LED_ERROR, HIGH);       // Apaga el LED (NRF OK)
 }
 
 
@@ -146,8 +168,12 @@ void setup() {
 
   Serial.begin(115200);
 
+  pinMode(PIN_LED_R, OUTPUT);
+  pinMode(PIN_LED_B, OUTPUT);
+  pinMode(PIN_LED_G, OUTPUT);
+
   unsigned long t0 = millis();
-  while (!Serial && (millis() - t0 < 2000)) { /* espera breve */ };
+  while (!Serial && (millis() - t0 < 2000)) {LED_ROJO(); /* espera breve */};
   Serial.println(F("== Receptor de mouse giroscopico =="));
   Serial.println(F("Inicio correcto."));
 
@@ -155,6 +181,9 @@ void setup() {
 
   if (!radio.begin()) {                    // Verifica que el módulo responda
     errorNRF();                            // Bloquea con parpadeo hasta detectarlo
+  }
+  if (!radio.isChipConnected()){
+    errorNRF();
   }
   Serial.println(F("NRF24L01 detectado."));
 
@@ -169,6 +198,7 @@ void setup() {
   radio.setAutoAck(true);                  // Confirmación automática de paquetes
   radio.openReadingPipe(1, direccion);     // Escucha en el pipe 1 con la dirección común.
   radio.startListening();                  // Modo RECEPTOR.
+
 
   Serial.println(F("Escuchando paquetes..."));
   ultimoPaquete = millis();                // Evita un timeout inmediato al arrancar
@@ -185,6 +215,7 @@ void loop() {
 
   if (radio.available()) {
     radio.read(&data, sizeof(data));       // Vuelca el paquete en la struct
+    LED_VERDE();
 
     if (data.magic != MAGIC_VALOR) {
       radio.flush_rx();                    // Limpia datos inválidos del FIFO
@@ -265,6 +296,7 @@ void loop() {
   */
 
   if (!conectado && (ahora - ultimoRescan >= RESCAN_MS)) {
+    LED_AZUL();
     ultimoRescan = ahora;
     radio.flush_rx();                      // Descarta datos viejos/corruptos
     radio.startListening();                // Re-asegura el modo escucha

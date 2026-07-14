@@ -356,7 +356,7 @@ void loop() {
   bool ok = radio.write(&data, sizeof(data), true);   // multicast = true
 
   if (ok) countOK++; else countFAIL++;
-  //if (countFAIL > 20) LED_AMARILLO(); else LED_VERDE();
+
   /* ------------------------------------------------------------------------
    *  (9) DEBUG POR SERIAL (cada SERIAL_INTERVAL_MS)
    * ------------------------------------------------------------------------
@@ -374,7 +374,7 @@ void loop() {
     Serial.print(F(" FAIL:")); Serial.println(countFAIL);
     Serial.print(F(" L:"));  Serial.print(data.clickLeft  ? F("1") : F("0"));
     Serial.print(F(" R:"));  Serial.print(data.clickRight ? F("1") : F("0"));
-    if (countFAIL > 20) LED_AMARILLO(); else LED_VERDE();
+    if (countOK < 15) LED_AMARILLO(); else LED_VERDE();
     countOK = 0;
     countFAIL = 0;
   }

@@ -5,7 +5,7 @@ Proyecto Tecnológico Final 2026
 COMPONENTES
 ------------------------------------------------------
 
- -2x Arduino Pro Micro (5V, 16KHz)
+ -2x Arduino Pro Micro (5V, 16MHz)
 
  -Giroscópio MPU6050 6 ejes
 

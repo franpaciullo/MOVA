@@ -201,7 +201,7 @@ void setup() {
   Serial.print("WHO_AM_I = 0x");
   Serial.println(id, HEX);
 
-  if (mpu.testConnection()) { // cambiar por id != 0x00 && id != 0x3F)
+  if (mpu.testConnection()) { // si no funckona cambiar 'mpu.testConnection()' por 'id != 0x00 && id != 0x3F'
     Serial.println(F("[MPU6050] Conexion correcta."));
     mpuOK = true;
   } else {

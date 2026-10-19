@@ -70,8 +70,8 @@ const byte direccion[6] = "MOUSE";
 
 // --- LED RGB (ánodo común: LOW = encendido, HIGH = apagado) ---
 #define PIN_LED_R  2   // Rojo
-#define PIN_LED_B  3   // Azul
-#define PIN_LED_G  4   // Verde
+#define PIN_LED_B  4   // Azul
+#define PIN_LED_G  3   // Verde
 
 void LedRGB(bool rojo, bool azul, bool verde) {
   digitalWrite(PIN_LED_R, rojo  ? HIGH : LOW);

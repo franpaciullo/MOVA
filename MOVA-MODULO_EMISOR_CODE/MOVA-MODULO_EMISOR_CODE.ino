@@ -158,11 +158,11 @@ void LedRGB(bool rojo, bool azul, bool verde) {
 
 // Colores de estado (macros para legibilidad)
 #define LED_APAGADO()   LedRGB(0, 0, 0)
-#define LED_AMARILLO()  LedRGB(1, 0, 1)   // Rojo + Verde = Amarillo (iniciando)
+#define LED_AMARILLO()  LedRGB(1, 0, 1)   // Rojo + Verde = Amarillo (baja transmisión de datos)
 #define LED_AZUL()      LedRGB(0, 1, 0)   // Calibrando
 #define LED_VERDE()     LedRGB(0, 0, 1)   // OK
 #define LED_ROJO()      LedRGB(1, 0, 0)   // Error hardware
-#define LED_MAGENTA()   LedRGB(1, 1, 0) 
+#define LED_MAGENTA()   LedRGB(1, 1, 0)   // Iniciando
 
 void setup() {
   

@@ -79,9 +79,9 @@ MPU6050 mpu;           // Sensor MPU6050 (dirección I2C 0x68 por defecto)
 RF24 radio(PIN_CE, PIN_CSN);
 
 // --- LED RGB (ánodo común: LOW = encendido, HIGH = apagado) ---
-#define PIN_LED_R  A0   // Rojo
-#define PIN_LED_B  A1   // Azul
-#define PIN_LED_G  A2   // Verde
+#define PIN_LED_R  A1   // Rojo
+#define PIN_LED_B  A2   // Azul
+#define PIN_LED_G  A0   // Verde
 
 // --- Pines de los botones del mouse ---
 #define PIN_BTN_LEFT  4   // Botón izquierdo (INPUT_PULLUP: LOW = presionado)
